@@ -27,9 +27,11 @@ def main():
     parser.add_argument('--batch_train', type=int, default=256, help='batch size for training networks')
     parser.add_argument('--init', type=str, default='noise', help='noise/real: initialize synthetic images from random noise or randomly sampled real images.')
     parser.add_argument('--dsa_strategy', type=str, default='None', help='differentiable Siamese augmentation strategy')
-    parser.add_argument('--data_path', type=str, default='data', help='dataset path')
+    parser.add_argument('--data_path', type=str, default='/var/lib/data', help='dataset path')
     parser.add_argument('--save_path', type=str, default='result', help='path to save results')
     parser.add_argument('--dis_metric', type=str, default='ours', help='distance metric')
+    parser.add_argument('--include_ood', action='store_true')
+    parser.add_argument('--debias_mode', choices=['rsc', 'rsc_new', 'none'], default='none', help='the debiasing method') # "rsc_new" does not reduce the features across channels, but rank all elements in the feature map
 
     args = parser.parse_args()
     args.outer_loop, args.inner_loop = get_loops(args.ipc)
@@ -43,9 +45,11 @@ def main():
     if not os.path.exists(args.save_path):
         os.mkdir(args.save_path)
 
-    eval_it_pool = np.arange(0, args.Iteration+1, 500).tolist() if args.eval_mode == 'S' or args.eval_mode == 'SS' else [args.Iteration] # The list of iterations when we evaluate models and record results.
+    eval_it_pool = np.arange(0, args.Iteration+1, args.Iteration//2).tolist() if args.eval_mode == 'S' or args.eval_mode == 'SS' else [args.Iteration] # The list of iterations when we evaluate models and record results.
     print('eval_it_pool: ', eval_it_pool)
-    channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader = get_dataset(args.dataset, args.data_path)
+    channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader = get_dataset(args.dataset, args.data_path, args.include_ood)
+    print(dst_train)
+    print(dst_train[0][0].shape)
     model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)
 
 
@@ -86,7 +90,8 @@ def main():
 
         ''' initialize the synthetic data '''
         image_syn = torch.randn(size=(num_classes*args.ipc, channel, im_size[0], im_size[1]), dtype=torch.float, requires_grad=True, device=args.device)
-        label_syn = torch.tensor([np.ones(args.ipc)*i for i in range(num_classes)], dtype=torch.long, requires_grad=False, device=args.device).view(-1) # [0,0,0, 1,1,1, ..., 9,9,9]
+        # label_syn = torch.tensor([np.ones(args.ipc)*i for i in range(num_classes)], dtype=torch.long, requires_grad=False, device=args.device).view(-1) # [0,0,0, 1,1,1, ..., 9,9,9]
+        label_syn = torch.arange(num_classes, dtype=torch.long, requires_grad=False, device=args.device).repeat_interleave(args.ipc)
 
         if args.init == 'real':
             print('initialize synthetic data from random real images')
@@ -105,7 +110,7 @@ def main():
         for it in range(args.Iteration+1):
 
             ''' Evaluate synthetic data '''
-            if it in eval_it_pool:
+            if it in eval_it_pool and it != 0:
                 for model_eval in model_eval_pool:
                     print('-------------------------\nEvaluation\nmodel_train = %s, model_eval = %s, iteration = %d'%(args.model, model_eval, it))
                     if args.dsa:
@@ -128,7 +133,13 @@ def main():
                         image_syn_eval, label_syn_eval = copy.deepcopy(image_syn.detach()), copy.deepcopy(label_syn.detach()) # avoid any unaware modification
                         _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args)
                         accs.append(acc_test)
-                    print('Evaluate %d random %s, mean = %.4f std = %.4f\n-------------------------'%(len(accs), model_eval, np.mean(accs), np.std(accs)))
+                    if isinstance(accs[0], dict):
+                        clean_acc_ls = [ac["clean"] for ac in accs]
+                        cor_acc_ls = [ac["corruption"] for ac in accs]
+                        print('Evaluate %d random %s, clean acc mean = %.4f std = %.4f, corruption acc mean = %.4f std = %.4f\n-------------------------' % (
+                        len(accs), model_eval, np.mean(clean_acc_ls), np.std(clean_acc_ls), np.mean(cor_acc_ls), np.std(cor_acc_ls)))
+                    else:
+                        print('Evaluate %d random %s, mean = %.4f std = %.4f\n-------------------------'%(len(accs), model_eval, np.mean(accs), np.std(accs)))
 
                     if it == args.Iteration: # record the final results
                         accs_all_exps[model_eval] += accs
@@ -181,13 +192,16 @@ def main():
                     lab_real = torch.ones((img_real.shape[0],), device=args.device, dtype=torch.long) * c
                     img_syn = image_syn[c*args.ipc:(c+1)*args.ipc].reshape((args.ipc, channel, im_size[0], im_size[1]))
                     lab_syn = torch.ones((args.ipc,), device=args.device, dtype=torch.long) * c
+                    """img_syn = image_syn[c * args.ipc:c * args.ipc+5].reshape(
+                        (5, channel, im_size[0], im_size[1]))
+                    lab_syn = torch.ones((5,), device=args.device, dtype=torch.long) * c"""
 
                     if args.dsa:
                         seed = int(time.time() * 1000) % 100000
                         img_real = DiffAugment(img_real, args.dsa_strategy, seed=seed, param=args.dsa_param)
                         img_syn = DiffAugment(img_syn, args.dsa_strategy, seed=seed, param=args.dsa_param)
 
-                    output_real = net(img_real)
+                    output_real = net(img_real, gt=lab_real, debias_mode=args.debias_mode)
                     loss_real = criterion(output_real, lab_real)
                     gw_real = torch.autograd.grad(loss_real, net_parameters)
                     gw_real = list((_.detach().clone() for _ in gw_real))
@@ -228,7 +242,13 @@ def main():
     print('\n==================== Final Results ====================\n')
     for key in model_eval_pool:
         accs = accs_all_exps[key]
-        print('Run %d experiments, train on %s, evaluate %d random %s, mean  = %.2f%%  std = %.2f%%'%(args.num_exp, args.model, len(accs), key, np.mean(accs)*100, np.std(accs)*100))
+        if isinstance(accs[0], dict):
+            clean_acc_ls = [ac["clean"] for ac in accs]
+            cor_acc_ls = [ac["corruption"] for ac in accs]
+            print('Run %d experiments, train on %s, evaluate %d random %s, clean acc mean = %.2f%%  std = %.2f%%, corruption acc mean = %.2f%%  std = %.2f%%' % (
+            args.num_exp, args.model, len(accs), key, np.mean(clean_acc_ls) * 100, np.std(clean_acc_ls) * 100, np.mean(cor_acc_ls) * 100, np.std(cor_acc_ls) * 100))
+        else:
+            print('Run %d experiments, train on %s, evaluate %d random %s, mean  = %.2f%%  std = %.2f%%'%(args.num_exp, args.model, len(accs), key, np.mean(accs)*100, np.std(accs)*100))
 
 
 
