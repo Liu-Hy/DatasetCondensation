@@ -87,9 +87,9 @@ def get_dataset(dataset, data_path, include_ood=False):
             d_path = os.path.join(data_path, "cifar-100-python", "CIFAR-100-C")
             for cor in CORRUPTIONS:
                 with open(os.path.join(d_path, cor+".npy"), 'rb') as f:
-                    images_val = np.load(f)
+                    images_val = torch.tensor(np.load(f))
                 with open(os.path.join(d_path, "labels.npy"), 'rb') as g:
-                    labels_val = np.load(g)
+                    labels_val = torch.tensor(np.load(g), dtype=int)
                 images_val = torch.permute(images_val, (0, 3, 1, 2))
                 images_val = images_val.detach().float() / 255.0
                 labels_val = labels_val.detach()

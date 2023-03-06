@@ -77,8 +77,8 @@ def main():
         images_all = torch.cat(images_all, dim=0).to(args.device)
         labels_all = torch.tensor(labels_all, dtype=torch.long, device=args.device)
 
-        for c in range(num_classes):
-            print('class c = %d: %d real images'%(c, len(indices_class[c])))
+        #for c in range(num_classes):
+            #print('class c = %d: %d real images'%(c, len(indices_class[c])))
 
         def get_images(c, n): # get random n images from class c
             idx_shuffle = np.random.permutation(indices_class[c])[:n]
