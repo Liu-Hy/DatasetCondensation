@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
+import DGdatasets
 from torchvision import datasets, transforms
 from scipy.ndimage.interpolation import rotate as scipyrotate
 from networks import MLP, ConvNet, LeNet, AlexNet, AlexNetBN, VGG11, VGG11BN, ResNet18, ResNet18BN_AP, ResNet18BN
@@ -14,6 +15,17 @@ CORRUPTIONS = ['gaussian_noise', 'shot_noise', 'impulse_noise', 'defocus_blur', 
                'jpeg_compression']
 def get_dataset(dataset, data_path, include_ood=False):
     if dataset == 'MNIST':
+        channel = 1
+        im_size = (28, 28)
+        num_classes = 10
+        mean = [0.1307]
+        std = [0.3081]
+        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
+        dst_train = datasets.MNIST(data_path, train=True, download=True, transform=transform) # no augmentation
+        dst_test = datasets.MNIST(data_path, train=False, download=True, transform=transform)
+        class_names = [str(c) for c in range(num_classes)]
+
+    elif dataset == 'CMNIST':
         channel = 1
         im_size = (28, 28)
         num_classes = 10
@@ -103,27 +115,6 @@ def get_dataset(dataset, data_path, include_ood=False):
         num_classes = 200
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
-        """data = torch.load(os.path.join(data_path, 'tinyimagenet.pt'), map_location='cpu')
-
-        class_names = data['classes']
-
-        images_train = data['images_train']
-        labels_train = data['labels_train']
-        images_train = images_train.detach().float() / 255.0
-        labels_train = labels_train.detach()
-        for c in range(channel):
-            images_train[:,c] = (images_train[:,c] - mean[c])/std[c]
-        dst_train = TensorDataset(images_train, labels_train)  # no augmentation
-
-        images_val = data['images_val']
-        labels_val = data['labels_val']
-        images_val = images_val.detach().float() / 255.0
-        labels_val = labels_val.detach()
-
-        for c in range(channel):
-            images_val[:, c] = (images_val[:, c] - mean[c]) / std[c]
-
-        dst_test = TensorDataset(images_val, labels_val)  # no augmentation"""
 
         transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
         d_path = os.path.join(data_path, "tiny-imagenet")
@@ -140,12 +131,7 @@ def get_dataset(dataset, data_path, include_ood=False):
     else:
         exit('unknown dataset: %s'%dataset)
 
-    if include_ood:
-        testloader = dict()
-        for k, v in dst_test.items():
-            testloader[k] = torch.utils.data.DataLoader(v, batch_size=256, shuffle=False, num_workers=0)
-    else:
-        testloader = torch.utils.data.DataLoader(dst_test, batch_size=256, shuffle=False, num_workers=0)
+    testloader = torch.utils.data.DataLoader(dst_test, batch_size=256, shuffle=False, num_workers=0)
     return channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader
 
 
