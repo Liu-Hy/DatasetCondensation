@@ -13,7 +13,8 @@ from networks import MLP, ConvNet, LeNet, AlexNet, AlexNetBN, VGG11, VGG11BN, Re
 CORRUPTIONS = ['gaussian_noise', 'shot_noise', 'impulse_noise', 'defocus_blur', 'glass_blur', 'motion_blur',
                'zoom_blur', 'snow', 'frost', 'fog', 'brightness', 'contrast', 'elastic_transform', 'pixelate',
                'jpeg_compression']
-def get_dataset(dataset, data_path, include_ood=False):
+def get_dataset(dataset, data_path):
+    dsts = None
     if dataset == 'MNIST':
         channel = 1
         im_size = (28, 28)
@@ -26,15 +27,35 @@ def get_dataset(dataset, data_path, include_ood=False):
         class_names = [str(c) for c in range(num_classes)]
 
     elif dataset == 'CMNIST':
-        channel = 1
+        channel = 2
         im_size = (28, 28)
-        num_classes = 10
-        mean = [0.1307]
-        std = [0.3081]
+        num_classes = 2
+        mean = [0.1307, 0.1307]
+        std = [0.3081, 0.3081]
         transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
-        dst_train = datasets.MNIST(data_path, train=True, download=True, transform=transform) # no augmentation
-        dst_test = datasets.MNIST(data_path, train=False, download=True, transform=transform)
+        dsts = DGdatasets.ColoredMNIST("/var/lib/data").datasets
         class_names = [str(c) for c in range(num_classes)]
+
+    elif dataset == 'PACS':
+        channel = 3
+        im_size = (64, 64)
+        num_classes = 7
+        mean = [0.485, 0.456, 0.406]
+        std = [0.229, 0.224, 0.225]
+        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
+        dsts = DGdatasets.PACS("/var/lib/data").datasets
+        class_names = dsts[1].classes
+
+    elif dataset == 'VLCS':
+        channel = 3
+        im_size = (64, 64)
+        num_classes = 5
+        mean = [0.485, 0.456, 0.406]
+        std = [0.229, 0.224, 0.225]
+        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
+        dsts = DGdatasets.VLCS("/var/lib/data").datasets
+        class_names = dsts[1].classes
+        print(class_names)
 
     elif dataset == 'FashionMNIST':
         channel = 1
@@ -68,21 +89,6 @@ def get_dataset(dataset, data_path, include_ood=False):
         dst_train = datasets.CIFAR10(data_path, train=True, download=True, transform=transform) # no augmentation
         dst_test = datasets.CIFAR10(data_path, train=False, download=True, transform=transform)
         class_names = dst_train.classes
-        if include_ood:
-            dst_test = {"clean": dst_test}
-            d_path = os.path.join(data_path, "cifar-10-batches-py", "CIFAR-10-C")
-            for cor in CORRUPTIONS:
-                with open(os.path.join(d_path, cor+".npy"), 'rb') as f:
-                    images_val = torch.tensor(np.load(f))
-                with open(os.path.join(d_path, "labels.npy"), 'rb') as g:
-                    labels_val = torch.tensor(np.load(g), dtype=int)
-                images_val = torch.permute(images_val, (0, 3, 1, 2))
-                images_val = images_val.detach().float() / 255.0
-                labels_val = labels_val.detach()
-                #print("Shapes:", images_val.shape, labels_val.shape)
-                for c in range(channel):
-                    images_val[:, c] = (images_val[:, c] - mean[c]) / std[c]
-                dst_test["c-"+cor] = TensorDataset(images_val, labels_val)
 
     elif dataset == 'CIFAR100':
         channel = 3
@@ -94,20 +100,6 @@ def get_dataset(dataset, data_path, include_ood=False):
         dst_train = datasets.CIFAR100(data_path, train=True, download=True, transform=transform) # no augmentation
         dst_test = datasets.CIFAR100(data_path, train=False, download=True, transform=transform)
         class_names = dst_train.classes
-        if include_ood:
-            dst_test = {"clean": dst_test}
-            d_path = os.path.join(data_path, "cifar-100-python", "CIFAR-100-C")
-            for cor in CORRUPTIONS:
-                with open(os.path.join(d_path, cor+".npy"), 'rb') as f:
-                    images_val = torch.tensor(np.load(f))
-                with open(os.path.join(d_path, "labels.npy"), 'rb') as g:
-                    labels_val = torch.tensor(np.load(g), dtype=int)
-                images_val = torch.permute(images_val, (0, 3, 1, 2))
-                images_val = images_val.detach().float() / 255.0
-                labels_val = labels_val.detach()
-                for c in range(channel):
-                    images_val[:, c] = (images_val[:, c] - mean[c]) / std[c]
-                dst_test["c-"+cor] = TensorDataset(images_val, labels_val)
 
     elif dataset == 'TinyImageNet':
         channel = 3
@@ -121,18 +113,13 @@ def get_dataset(dataset, data_path, include_ood=False):
         dst_train = datasets.ImageFolder(os.path.join(d_path, "train"), transform=transform)
         dst_test = datasets.ImageFolder(os.path.join(d_path, "val"), transform=transform)
         class_names = dst_train.classes
-        if include_ood:
-            dst_test = {"clean": dst_test}
-            c_path = os.path.join(data_path, "Tiny-ImageNet-C")
-            for cor in CORRUPTIONS:
-                for intensity in range(1, 6):
-                    s_path = os.path.join(c_path, cor, str(intensity))
-                    dst_test["c-"+cor+"-"+str(intensity)] = datasets.ImageFolder(s_path, transform=transform)
     else:
         exit('unknown dataset: %s'%dataset)
 
-    testloader = torch.utils.data.DataLoader(dst_test, batch_size=256, shuffle=False, num_workers=0)
-    return channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader
+    # testloader = torch.utils.data.DataLoader(dst_test, batch_size=256, shuffle=False, num_workers=0)
+    if dsts is None:
+        dsts = dst_train, dst_test
+    return channel, im_size, num_classes, class_names, mean, std, dsts
 
 
 
@@ -388,17 +375,9 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args):
             optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
 
     time_train = time.time() - start
-    if isinstance(testloader, dict):
-        acc_test = dict()
-        for k, v in testloader.items():
-            acc_test[k] = epoch('test', v, net, optimizer, criterion, args, aug=False)[1]
-        acc_test["corruption"] = np.mean([acc for typ, acc in acc_test.items() if typ.startswith("c-")])
-        #print(acc_test)
-        print('%s Evaluate_%02d: epoch = %04d train time = %d s train loss = %.6f train acc = %.4f, test clean acc = %.4f corruption acc = %.4f' % (
-        get_time(), it_eval, Epoch, int(time_train), loss_train, acc_train, acc_test["clean"], acc_test["corruption"]))
-    else:
-        _, acc_test = epoch('test', testloader, net, optimizer, criterion, args, aug = False)
-        print('%s Evaluate_%02d: epoch = %04d train time = %d s train loss = %.6f train acc = %.4f, test acc = %.4f' % (get_time(), it_eval, Epoch, int(time_train), loss_train, acc_train, acc_test))
+
+    _, acc_test = epoch('test', testloader, net, optimizer, criterion, args, aug = False)
+    print('%s Evaluate_%02d: epoch = %04d train time = %d s train loss = %.6f train acc = %.4f, test acc = %.4f' % (get_time(), it_eval, Epoch, int(time_train), loss_train, acc_train, acc_test))
 
     return net, acc_train, acc_test
 

@@ -46,6 +46,8 @@ class ConvNet(nn.Module):
         self.classifier = nn.Linear(num_feat, num_classes)
         self.drop_f = 1 / 3.0
         self.drop_b = 1 / 3.0
+        self.p = 0.5
+        self.k = 0.3
 
     def forward(self, x, gt=None, debias_mode='none'):
         x = self.features(x)
@@ -56,20 +58,11 @@ class ConvNet(nn.Module):
         HW = H * W
         if debias_mode == 'rsc':
             self.eval()
-            #x_new = x.clone().detach()
-            #x_new = Variable(x_new.data, requires_grad=True)
             x_new = x.detach().clone().requires_grad_()
-            #x_new_view = self.avgpool(x_new)
-            #x_new_view = x_new_view.view(x_new_view.size(0), -1)
-            #output = self.fc(x_new_view)
             x_new_view = x_new.view(x_new.size(0), -1)
             output = self.classifier(x_new_view)
             class_num = output.shape[1]
             index = gt
-            """num_rois = x_new.shape[0]
-            num_channel = x_new.shape[1]
-            H = x_new.shape[2]
-            HW = x_new.shape[2] * x_new.shape[3] #H * H"""
             sp_i = torch.ones([2, num_rois]).long()
             sp_i[0, :] = torch.arange(num_rois)
             sp_i[1, :] = index
@@ -214,7 +207,7 @@ class ConvNet(nn.Module):
             im_size = (32, 32)
         shape_feat = [in_channels, im_size[0], im_size[1]]
         for d in range(net_depth):
-            layers += [nn.Conv2d(in_channels, net_width, kernel_size=3, padding=3 if channel == 1 and d == 0 else 1)]
+            layers += [nn.Conv2d(in_channels, net_width, kernel_size=3, padding=3 if channel in (1, 2) and d == 0 else 1)]
             shape_feat[0] = net_width
             if net_norm != 'none':
                 layers += [self._get_normlayer(net_norm, shape_feat)]
